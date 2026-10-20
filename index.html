@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VT Re-Entry Circuit Mapping & Ablation Simulator</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        epDark: '#0a0d12',
+                        epPanel: '#121824',
+                        epBorder: '#1e293b',
+                        epECG: '#00ff66',
+                        epEGM: '#ffff00',
+                        epPace: '#00f0ff',
+                        epScar: '#1e1b2e',
+                        epDenseScar: '#0f0a1c',
+                        epBorderZone: '#332940'
+                    },
+                    fontFamily: {
+                        mono: ['Courier New', 'monospace', 'ui-monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0a0d12;
+            color: #e2e8f0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            user-select: none;
+        }
+        /* Custom scrollbar for dark EP theme */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0d12; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+        .glass-panel {
+            background: rgba(18, 24, 36, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .signal-grid {
+            background-size: 20px 20px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        }
+        .pulse-catheter {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.15); opacity: 0.4; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-sm">
+
+    <!-- TOP HEADER / NAV -->
+    <header class="h-14 bg-epPanel border-b border-epBorder px-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+            <h1 class="font-bold text-base tracking-wide text-gray-100 flex items-center gap-2">
+                <span>VT RE-ENTRY CIRCUIT SIMULATOR</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-blue-900/60 text-blue-300 font-normal border border-blue-700/50">EP FELLOW FELLOWSHIP MODULE</span>
+            </h1>
+        </div>
+
+        <div class="flex items-center space-x-4">
+            <!-- Mode Selector Switcher -->
+            <div class="bg-epDark p-1 rounded-lg border border-epBorder flex text-xs">
+                <button id="mode-activation-btn" onclick="setMappingMode('activation')" class="px-3 py-1 rounded-md bg-blue-600 text-white font-medium transition">
+                    Activation / Entrainment
+                </button>
+                <button id="mode-substrate-btn" onclick="setMappingMode('substrate')" class="px-3 py-1 rounded-md text-gray-400 hover:text-gray-200 transition">
+                    Substrate SR Mapping (Unstable VT)
+                </button>
+                <button id="mode-exam-btn" onclick="setMappingMode('exam')" class="px-3 py-1 rounded-md text-gray-400 hover:text-gray-200 transition">
+                    10-Q Assessment
+                </button>
+            </div>
+
+            <!-- Faculty Toggle -->
+            <button id="faculty-toggle-btn" onclick="toggleFacultyMode()" class="px-3 py-1 rounded-lg border border-purple-500/40 text-purple-300 bg-purple-950/30 hover:bg-purple-900/40 font-mono text-xs flex items-center gap-1.5 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                <span>FACULTY MODE: OFF</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN APP CONTAINER -->
+    <div id="main-app-container" class="flex-1 flex overflow-hidden">
+        
+        <!-- LEFT PANEL: CASE SELECTOR & ANATOMICAL SUBSTRATE MAP -->
+        <div class="w-5/12 flex flex-col border-r border-epBorder bg-epDark p-3 space-y-3 overflow-y-auto">
+            
+            <!-- Case Selection Bar -->
+            <div class="glass-panel p-2.5 rounded-lg flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <label class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Case:</label>
+                    <select id="case-selector" onchange="loadCase(this.value)" class="bg-epDark text-gray-200 border border-epBorder rounded p-1 text-xs focus:outline-none focus:border-blue-500">
+                        <option value="0">Case 1: Obvious Central Isthmus</option>
+                        <option value="1">Case 2: Entrance vs. Central Isthmus</option>
+                        <option value="2">Case 3: Exit Trap (100% Pace Map)</option>
+                        <option value="3">Case 4: Inner Bystander Trap</option>
+                        <option value="4">Case 5: Complex Multi-Channel Scar</option>
+                        <option value="5">Case 6: Diagnostic Uncertainty Case</option>
+                    </select>
+                </div>
+                <div id="case-difficulty-badge" class="px-2 py-0.5 text-[10px] uppercase font-bold tracking-widest rounded bg-green-950 text-green-400 border border-green-800">
+                    Level: Basic
+                </div>
+            </div>
+
+            <!-- Case Clinical Prompt -->
+            <div class="glass-panel p-3 rounded-lg text-xs leading-relaxed text-gray-300">
+                <div class="font-bold text-blue-400 mb-1 flex justify-between items-center">
+                    <span id="case-title-text">Case 1: Standard Re-Entry VT</span>
+                    <span id="case-tcl-display" class="font-mono text-yellow-400">VT TCL: 400 ms</span>
+                </div>
+                <p id="case-description-text">
+                    Patient with ischemic cardiomyopathy presents with sustained monomorphic VT. Click on substrate mapping sites to assess EGM, perform entrainment, and localize the critical isthmus.
+                </p>
+            </div>
+
+            <!-- SVG SUBSTRATE MAP CANVAS -->
+            <div class="flex-1 glass-panel rounded-lg p-2 relative flex flex-col items-center justify-center min-h-[380px]">
+                <div class="absolute top-2 left-3 text-[11px] font-mono text-gray-400 flex gap-3 z-10">
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-purple-950 border border-purple-600 inline-block"></span> Scar Substrate</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-900 inline-block"></span> Viable Myocardium</span>
+                    <span id="substrate-mode-label" class="text-blue-400 font-semibold">Mode: Activation / Entrainment</span>
+                </div>
+
+                <svg id="substrate-svg" class="w-full h-full max-h-[420px] select-none" viewBox="0 0 500 450">
+                    <!-- Background LV myocardium outline -->
+                    <path d="M 80 80 C 150 20, 350 20, 420 80 C 470 180, 460 320, 250 420 C 40 320, 30 180, 80 80 Z" fill="#4a151b" stroke="#7f1d1d" stroke-width="3"/>
+                    
+                    <!-- Dense Scar & Border Zone Path (Generated per case) -->
+                    <g id="scar-group"></g>
+                    
+                    <!-- Wavefront Re-Entry Animation Arrows (Revealed in Faculty/Post-ablation) -->
+                    <g id="circuit-vectors" class="opacity-0 transition-opacity duration-500"></g>
+
+                    <!-- Clickable Mapping Sites -->
+                    <g id="mapping-sites-group"></g>
+
+                    <!-- Catheter Target Indicator -->
+                    <g id="catheter-indicator" class="hidden">
+                        <circle id="catheter-halo" cx="0" cy="0" r="14" fill="none" stroke="#00f0ff" stroke-width="2" class="pulse-catheter"/>
+                        <circle id="catheter-tip" cx="0" cy="0" r="4" fill="#00f0ff"/>
+                    </g>
+
+                    <!-- Ablation Lesions overlay -->
+                    <g id="ablation-lesions-group"></g>
+                </svg>
+
+                <div class="absolute bottom-2 right-3 text-[10px] text-gray-500 font-mono">
+                    LV Inferolateral Aspect (2D SVG Representation)
+                </div>
+            </div>
+
+            <!-- Trust Hierarchy Panel -->
+            <div class="glass-panel p-3 rounded-lg text-xs space-y-2">
+                <div class="font-bold text-gray-300 flex justify-between items-center">
+                    <span>EVIDENCE TRUST HIERARCHY</span>
+                    <span class="text-[10px] text-gray-500 font-normal">EP Integration Framework</span>
+                </div>
+                <div class="space-y-1.5 text-[11px]">
+                    <div>
+                        <div class="flex justify-between text-gray-400 mb-0.5">
+                            <span>Concealed Fusion + Short PPI-TCL (≤30ms)</span>
+                            <span class="text-green-400 font-bold">GOLD STANDARD (95%)</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5"><div class="bg-green-500 h-1.5 rounded-full" style="width: 95%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-gray-400 mb-0.5">
+                            <span>Diastolic Fractionated / LAVA Timing</span>
+                            <span class="text-yellow-400 font-bold">HIGH (75% - Needs Entrainment)</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5"><div class="bg-yellow-500 h-1.5 rounded-full" style="width: 75%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-gray-400 mb-0.5">
+                            <span>Pace Map Concordance (12/12 Match)</span>
+                            <span class="text-red-400 font-bold">MODERATE (30% - High Exit/Bystander False Positive)</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5"><div class="bg-red-500 h-1.5 rounded-full" style="width: 30%"></div></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- CENTER PANEL: REAL-TIME ELECTROGRAM CANVAS & PACING CONTROLS -->
+        <div class="w-4/12 flex flex-col border-r border-epBorder bg-epDark p-3 space-y-3 overflow-y-auto">
+            
+            <div class="glass-panel p-2.5 rounded-lg flex items-center justify-between">
+                <span class="font-bold text-gray-200 text-xs flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-yellow-400 inline-block"></span>
+                    EP SIGNAL RECORDING
+                </span>
+                <span id="selected-site-label" class="font-mono text-xs text-cyan-400 font-semibold">Site: None Selected</span>
+            </div>
+
+            <!-- Signal Display Canvas Container -->
+            <div class="glass-panel p-2 rounded-lg signal-grid relative flex-1 flex flex-col justify-between min-h-[350px]">
+                <canvas id="egm-canvas" class="w-full h-full block"></canvas>
+                
+                <!-- Measurements Overlay Panel -->
+                <div id="measurement-overlay" class="bg-epDark/90 border border-epBorder p-2.5 rounded-md mt-2 space-y-2 hidden">
+                    <div class="flex justify-between items-center border-b border-epBorder pb-1">
+                        <span class="text-xs font-bold text-gray-300">CALCULATED EP MEASUREMENTS</span>
+                        <button onclick="toggleVisualEstimate()" id="estimate-toggle-btn" class="text-[10px] text-blue-400 underline">
+                            Hide Values (Estimate Mode)
+                        </button>
+                    </div>
+                    <div id="measurements-grid" class="grid grid-cols-2 gap-2 text-xs font-mono">
+                        <div class="bg-epPanel p-1.5 rounded border border-epBorder">
+                            <span class="text-gray-400 block text-[10px]">EGM -> QRS Delay</span>
+                            <span id="val-egm-qrs" class="text-white font-bold">-- ms</span>
+                        </div>
+                        <div class="bg-epPanel p-1.5 rounded border border-epBorder">
+                            <span class="text-gray-400 block text-[10px]">Post-Pacing Interval (PPI)</span>
+                            <span id="val-ppi" class="text-white font-bold">-- ms</span>
+                        </div>
+                        <div class="bg-epPanel p-1.5 rounded border border-epBorder">
+                            <span class="text-gray-400 block text-[10px]">PPI − TCL</span>
+                            <span id="val-ppi-tcl" class="text-white font-bold">-- ms</span>
+                        </div>
+                        <div class="bg-epPanel p-1.5 rounded border border-epBorder">
+                            <span class="text-gray-400 block text-[10px]">S–QRS / TCL Ratio</span>
+                            <span id="val-sqrs-tcl" class="text-white font-bold">-- %</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Interactive Pacing & Entrainment Control Panel -->
+            <div id="pacing-controls-panel" class="glass-panel p-3 rounded-lg space-y-3">
+                <div class="font-bold text-xs text-gray-300 border-b border-epBorder pb-1.5 flex justify-between items-center">
+                    <span>PACING & ENTRAINMENT PROTOCOL</span>
+                    <span id="fusion-status-tag" class="px-2 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400 font-mono">Status: Idle</span>
+                </div>
+
+                <!-- Sliders for What-If Scenarios -->
+                <div class="space-y-2 text-xs">
+                    <div>
+                        <div class="flex justify-between text-gray-400 mb-1">
+                            <span>Pacing Output Intensity:</span>
+                            <span id="output-val" class="font-mono text-cyan-400 font-bold">2 mA (Local Capture)</span>
+                        </div>
+                        <input id="output-slider" type="range" min="1" max="15" value="2" oninput="updatePacingSettings()" class="w-full accent-cyan-400 bg-gray-800 rounded">
+                        <p id="high-output-warning" class="text-[10px] text-amber-400 mt-0.5 hidden font-mono">
+                            ⚠️ WARNING: Output &gt;8mA risks far-field capture & distorted fusion/PPI.
+                        </p>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-gray-400 mb-1">
+                            <span>Pacing Cycle Length (PCL):</span>
+                            <span id="pcl-val" class="font-mono text-cyan-400 font-bold">380 ms (TCL - 20ms)</span>
+                        </div>
+                        <input id="pcl-slider" type="range" min="300" max="420" value="380" oninput="updatePacingSettings()" class="w-full accent-cyan-400 bg-gray-800 rounded">
+                        <p id="rapid-pacing-warning" class="text-[10px] text-amber-400 mt-0.5 hidden font-mono">
+                            ⚠️ WARNING: Rapid pacing (&lt;TCL-30) causes decremental conduction delay in slow zone.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Entrainment Action Button -->
+                <button id="entrain-btn" onclick="performEntrainment()" disabled class="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 text-white font-bold rounded-md shadow text-xs tracking-wider uppercase transition">
+                    Perform Overdrive Entrainment
+                </button>
+            </div>
+
+            <!-- S-QRS Framework Reference Box -->
+            <div class="glass-panel p-2.5 rounded-lg text-[11px] text-gray-400 space-y-1 border-l-2 border-blue-500">
+                <span class="font-bold text-gray-200 block text-xs">S–QRS / TCL Diagnostic Thresholds:</span>
+                <div class="flex justify-between font-mono text-[10px]">
+                    <span class="text-blue-300">&lt;30%: Entrance Site</span>
+                    <span class="text-green-300">30–70%: Central Isthmus</span>
+                    <span class="text-amber-300">&gt;70%: Exit Site</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT PANEL: DECISION CHALLENGE, FEEDBACK & FACULTY INFO -->
+        <div class="w-3/12 flex flex-col bg-epDark p-3 space-y-3 overflow-y-auto">
+            
+            <!-- Decision Challenge Box -->
+            <div class="glass-panel p-3 rounded-lg space-y-3 border border-yellow-500/30">
+                <div class="font-bold text-xs text-yellow-400 flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    TRAINEE DECISION CHALLENGE
+                </div>
+
+                <div class="space-y-2">
+                    <label class="text-xs text-gray-300 block font-semibold">1. Select Target Site for Ablation:</label>
+                    <select id="target-site-select" class="w-full bg-epDark text-gray-200 border border-epBorder rounded p-1.5 text-xs focus:outline-none focus:border-yellow-500">
+                        <option value="">-- Choose Mapping Location --</option>
+                    </select>
+
+                    <label class="text-xs text-gray-300 block font-semibold pt-1">2. Defend your decision (Primary Rationale):</label>
+                    <select id="rationale-select" class="w-full bg-epDark text-gray-200 border border-epBorder rounded p-1.5 text-xs focus:outline-none focus:border-yellow-500">
+                        <option value="">-- Select EP Rationale --</option>
+                        <option value="best_pacemap">100% Pace-Map Concordance</option>
+                        <option value="earliest_act">Earliest Local Activation (-50ms pre-QRS)</option>
+                        <option value="diastolic_potential">Prominent Mid-Diastolic Potential / LAVA</option>
+                        <option value="shortest_ppi">Shortest Post-Pacing Interval (PPI = TCL)</option>
+                        <option value="circuit_criteria">Concealed Fusion + Short PPI-TCL (≤30ms) + Intermediate S-QRS/TCL</option>
+                        <option value="outer_bystander">Manifest Fusion + Short PPI-TCL</option>
+                    </select>
+
+                    <button id="deliver-ablation-btn" onclick="submitAblationDecision()" class="w-full py-2 bg-red-700 hover:bg-red-600 text-white font-bold rounded-md shadow text-xs uppercase tracking-wider transition">
+                        Deliver Radiofrequency Energy
+                    </button>
+                </div>
+            </div>
+
+            <!-- Feedback & Reasoning Output Panel -->
+            <div id="feedback-panel" class="glass-panel p-3 rounded-lg flex-1 space-y-2 hidden">
+                <div id="feedback-header" class="font-bold text-xs p-1.5 rounded text-center">
+                    RESULT EVALUATION
+                </div>
+                <div id="feedback-body" class="text-xs space-y-2 text-gray-300 leading-relaxed overflow-y-auto max-h-[220px] pr-1">
+                    <!-- Dynamic feedback injected here -->
+                </div>
+            </div>
+
+            <!-- Diagnostic Uncertainty / What-If Scenario Panel -->
+            <div class="glass-panel p-3 rounded-lg space-y-2 border border-blue-500/20">
+                <div class="font-bold text-xs text-blue-300 flex justify-between items-center">
+                    <span>DIAGNOSTIC UNCERTAINTY MODE</span>
+                    <button onclick="triggerUncertaintyTest()" class="text-[10px] text-blue-400 hover:underline font-mono">Test Scenario</button>
+                </div>
+                <p class="text-[11px] text-gray-400 leading-snug">
+                    Simulate borderline clinical findings (e.g. PPI - TCL = 32ms, output artifact). EP fellows must learn when data is inconclusive.
+                </p>
+            </div>
+
+            <!-- Faculty Info Panel (Hidden by default) -->
+            <div id="faculty-info-panel" class="glass-panel p-3 rounded-lg space-y-2 border border-purple-500/40 hidden">
+                <div class="font-bold text-xs text-purple-300 flex items-center justify-between">
+                    <span>FACULTY GROUND TRUTH</span>
+                    <span class="text-[10px] bg-purple-900 text-purple-200 px-1.5 py-0.5 rounded">INSTRUCTOR ONLY</span>
+                </div>
+                <div id="faculty-details" class="text-[11px] text-purple-200 space-y-1.5 font-mono">
+                    <!-- Faculty details injected dynamically -->
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ASSESSMENT MODULE CONTAINER (HIDDEN UNTIL SWITCHED) -->
+    <div id="assessment-container" class="flex-1 p-6 overflow-y-auto hidden max-w-4xl mx-auto w-full">
+        <div class="glass-panel p-6 rounded-xl space-y-6 border border-blue-500/30">
+            <div class="border-b border-epBorder pb-4 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-bold text-white">EP FELLOWSHIP COMPREHENSIVE ASSESSMENT</h2>
+                    <p class="text-xs text-gray-400">10 Scenarios on Circuit Localization, Entrainment Traps & Pacing Artifacts</p>
+                </div>
+                <button onclick="submitAssessment()" class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg text-xs">
+                    Submit Test & Grade
+                </button>
+            </div>
+
+            <div id="quiz-questions-container" class="space-y-6">
+                <!-- 10 Quiz Questions dynamically rendered -->
+            </div>
+
+            <div id="assessment-results-panel" class="p-4 rounded-lg bg-epPanel border border-epBorder hidden space-y-3">
+                <h3 class="font-bold text-sm text-yellow-400">ASSESSMENT REPORT CARD</h3>
+                <div id="assessment-score-summary" class="text-xs text-gray-200"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCIENTIFIC DISCLAIMER FOOTER -->
+    <footer class="h-6 bg-epPanel border-t border-epBorder px-4 flex items-center justify-between text-[10px] text-gray-500 shrink-0">
+        <div>
+            <span class="text-amber-500 font-bold">EDUCATIONAL DISCLAIMER:</span> For Electrophysiology Trainee Teaching Only. Numerical thresholds (Stevenson WG et al.) are simplified educational models.
+        </div>
+        <div class="font-mono">
+            Circulation 1993;88:2347 | Heart Rhythm 2015;12:1313
+        </div>
+    </footer>
+
+    <!-- MAIN JAVASCRIPT LOGIC -->
+    <script>
+        // GLOBAL APP STATE & CASE DATABASE
+        let currentMode = 'activation'; // 'activation', 'substrate', 'exam'
+        let facultyMode = false;
+        let currentCaseIndex = 0;
+        let selectedSiteId = null;
+        let visualEstimateHidden = false;
+        let pacerOutput = 2; // mA
+        let pacerPCL = 380; // ms
+        let entrainmentActive = false;
+        let ablationDelivered = false;
+
+        // CASES DATABASE
+        const cases = [
+            {
+                title: "Case 1: Obvious Central Isthmus",
+                difficulty: "Basic",
+                tcl: 400,
+                description: "Standard ischemic VT with an accessible diastolic conduction channel. Identify the protected central isthmus bounded by dense scar.",
+                scarPaths: "M 150 120 C 200 100, 320 100, 350 140 C 370 200, 360 280, 320 320 C 250 350, 180 320, 150 260 Z",
+                denseScarPaths: "M 180 150 Q 250 130 310 160 Q 330 220 290 280 Q 230 300 180 250 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Central Isthmus)', x: 240, y: 200, egmDelay: 180, ppi: 405, fusion: 'concealed', sqrs: 200, pacemap: 75, type: 'isthmus', lava: true },
+                    { id: 'B', name: 'Site B (Entrance)', x: 190, y: 160, egmDelay: 220, ppi: 410, fusion: 'concealed', sqrs: 80, pacemap: 60, type: 'entrance', lava: true },
+                    { id: 'C', name: 'Site C (Exit)', x: 300, y: 250, egmDelay: 20, ppi: 405, fusion: 'concealed', sqrs: 310, pacemap: 98, type: 'exit', lava: false },
+                    { id: 'D', name: 'Site D (Outer Bystander)', x: 380, y: 200, egmDelay: -10, ppi: 480, fusion: 'manifest', sqrs: 20, pacemap: 40, type: 'outer_bystander', lava: false }
+                ],
+                faculty: {
+                    isthmusSite: 'A',
+                    explanation: "Site A is inside the central isthmus: Low voltage fractionated EGM in mid-diastole, Concealed fusion during entrainment, PPI - TCL = 5ms (≤30ms), S-QRS/TCL = 50% (30-70%).",
+                    pitfall: "Site C has a 98% pace map match but is the exit! Ablating the exit often fails or leads to VT recurrence."
+                }
+            },
+            {
+                title: "Case 2: Entrance vs. Central Isthmus Discrimination",
+                difficulty: "Intermediate",
+                tcl: 380,
+                description: "Two adjacent sites within the scar channel show isolated diastolic potentials and concealed fusion. Use S-QRS / TCL ratio to distinguish entrance from central isthmus.",
+                scarPaths: "M 140 100 C 220 80, 340 90, 370 160 C 390 230, 350 310, 280 340 C 200 360, 140 300, 130 220 Z",
+                denseScarPaths: "M 170 130 Q 250 110 330 150 Q 340 230 290 290 Q 210 310 160 220 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Entrance Channel)', x: 190, y: 150, egmDelay: 210, ppi: 385, fusion: 'concealed', sqrs: 70, pacemap: 55, type: 'entrance', lava: true },
+                    { id: 'B', name: 'Site B (Mid Central Isthmus)', x: 250, y: 210, egmDelay: 160, ppi: 382, fusion: 'concealed', sqrs: 180, pacemap: 80, type: 'isthmus', lava: true },
+                    { id: 'C', name: 'Site C (Exit Channel)', x: 310, y: 270, egmDelay: 30, ppi: 385, fusion: 'concealed', sqrs: 300, pacemap: 95, type: 'exit', lava: false },
+                    { id: 'D', name: 'Site D (Adjacent Myocardium)', x: 380, y: 310, egmDelay: -20, ppi: 460, fusion: 'manifest', sqrs: 10, pacemap: 30, type: 'outer_bystander', lava: false }
+                ],
+                faculty: {
+                    isthmusSite: 'B',
+                    explanation: "Site A and B both show concealed fusion and short PPI-TCL (≤30ms). Site A has S-QRS/TCL = 18.4% (<30% -> Entrance). Site B has S-QRS/TCL = 47.3% (30-70% -> Central Isthmus).",
+                    pitfall: "Do not ablate Site A solely because it has the earliest diastolic potential. It represents the entrance."
+                }
+            },
+            {
+                title: "Case 3: Exit Trap (100% Pace Map Match)",
+                difficulty: "Adversarial",
+                tcl: 420,
+                description: "The trainee is tempted by a perfect 12/12 pace map at the exit site. Prove that pace mapping alone cannot confirm the central isthmus.",
+                scarPaths: "M 120 110 C 200 70, 360 80, 390 170 C 410 250, 360 340, 260 370 C 170 380, 110 300, 110 200 Z",
+                denseScarPaths: "M 160 140 Q 260 110 340 170 Q 330 270 240 310 Q 150 280 150 180 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Diastolic Path)', x: 230, y: 200, egmDelay: 190, ppi: 425, fusion: 'concealed', sqrs: 220, pacemap: 70, type: 'isthmus', lava: true },
+                    { id: 'B', name: 'Site B (Exit Site)', x: 320, y: 280, egmDelay: 10, ppi: 422, fusion: 'concealed', sqrs: 360, pacemap: 100, type: 'exit', lava: false },
+                    { id: 'C', name: 'Site C (Outer Bystander)', x: 360, y: 200, egmDelay: -15, ppi: 510, fusion: 'manifest', sqrs: 30, pacemap: 85, type: 'outer_bystander', lava: false },
+                    { id: 'D', name: 'Site D (Inner Bystander)', x: 180, y: 250, egmDelay: 230, ppi: 495, fusion: 'concealed', sqrs: 250, pacemap: 60, type: 'inner_bystander', lava: true }
+                ],
+                faculty: {
+                    isthmusSite: 'A',
+                    explanation: "Site B gives a 100% pace map match but S-QRS/TCL is 85.7% (>70% -> Exit). True central isthmus is Site A with S-QRS/TCL = 52% and concealed fusion.",
+                    pitfall: "Pace mapping at an exit site produces a matching QRS because the wavefront exits into normal myocardium at the same spot."
+                }
+            },
+            {
+                title: "Case 4: Inner Bystander Trap",
+                difficulty: "Advanced",
+                tcl: 390,
+                description: "A site in a dead-end side branch presents with a sharp isolated diastolic potential and concealed fusion, but has a long PPI - TCL.",
+                scarPaths: "M 130 90 C 230 70, 350 80, 380 150 C 400 240, 340 330, 250 360 C 150 370, 110 280, 110 180 Z",
+                denseScarPaths: "M 160 120 Q 250 100 330 150 Q 320 250 230 290 Q 140 260 150 160 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Dead-End Side Branch)', x: 200, y: 270, egmDelay: 210, ppi: 460, fusion: 'concealed', sqrs: 210, pacemap: 75, type: 'inner_bystander', lava: true },
+                    { id: 'B', name: 'Site B (True Protected Channel)', x: 260, y: 200, egmDelay: 175, ppi: 395, fusion: 'concealed', sqrs: 195, pacemap: 80, type: 'isthmus', lava: true },
+                    { id: 'C', name: 'Site C (Exit Channel)', x: 320, y: 160, egmDelay: 25, ppi: 392, fusion: 'concealed', sqrs: 310, pacemap: 95, type: 'exit', lava: false }
+                ],
+                faculty: {
+                    isthmusSite: 'B',
+                    explanation: "Site A displays concealed fusion and attractive diastolic LAVA, BUT PPI - TCL = 70ms (>30ms). This proves it is an inner bystander (dead-end path connected to the circuit). Site B has PPI - TCL = 5ms.",
+                    pitfall: "Inner bystanders show concealed fusion because pacing enters the circuit without altering output wavefront, but PPI is prolonged by travel into and out of the dead end."
+                }
+            },
+            {
+                title: "Case 5: Complex Multi-Channel Scar",
+                difficulty: "Expert",
+                tcl: 410,
+                description: "Multiple fractionated signals across a extensive scar. Differentiate outer loop, outer bystander, inner bystander, and the true critical central isthmus.",
+                scarPaths: "M 100 100 C 220 50, 380 60, 420 160 C 440 270, 370 370, 240 400 C 120 400, 80 280, 80 170 Z",
+                denseScarPaths: "M 140 130 Q 250 80 360 140 Q 370 270 250 330 Q 130 310 130 190 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Outer Loop)', x: 380, y: 250, egmDelay: 60, ppi: 415, fusion: 'manifest', sqrs: 80, pacemap: 60, type: 'outer_loop', lava: false },
+                    { id: 'B', name: 'Site B (Inner Bystander)', x: 170, y: 220, egmDelay: 220, ppi: 480, fusion: 'concealed', sqrs: 230, pacemap: 70, type: 'inner_bystander', lava: true },
+                    { id: 'C', name: 'Site C (Critical Central Channel)', x: 250, y: 210, egmDelay: 185, ppi: 412, fusion: 'concealed', sqrs: 200, pacemap: 82, type: 'isthmus', lava: true },
+                    { id: 'D', name: 'Site D (Exit Vector)', x: 310, y: 150, egmDelay: 15, ppi: 415, fusion: 'concealed', sqrs: 340, pacemap: 96, type: 'exit', lava: false },
+                    { id: 'E', name: 'Site E (Outer Bystander)', x: 230, y: 320, egmDelay: -30, ppi: 520, fusion: 'manifest', sqrs: 20, pacemap: 35, type: 'outer_bystander', lava: false }
+                ],
+                faculty: {
+                    isthmusSite: 'C',
+                    explanation: "Site C is the only site combining Concealed Fusion, PPI - TCL ≤ 30ms (2ms), and S-QRS/TCL = 48.7%. Site A has manifest fusion with short PPI (Outer Loop). Site B has long PPI (Inner Bystander).",
+                    pitfall: "High complexity scar requires systematic check of every parameter before committing RF energy."
+                }
+            },
+            {
+                title: "Case 6: Diagnostic Uncertainty Case",
+                difficulty: "Borderline / Inconclusive",
+                tcl: 400,
+                description: "Clinical reality testing: Data is borderline (PPI - TCL = 32ms, high pacing threshold, ambiguous fusion). Determine whether data supports ablation or requires re-mapping.",
+                scarPaths: "M 130 100 C 220 80, 340 90, 370 160 C 390 230, 350 310, 280 340 C 200 360, 140 300, 130 220 Z",
+                denseScarPaths: "M 170 130 Q 250 110 330 150 Q 340 230 290 290 Q 210 310 160 220 Z",
+                sites: [
+                    { id: 'A', name: 'Site A (Borderline Measurement)', x: 250, y: 210, egmDelay: 140, ppi: 432, fusion: 'concealed', sqrs: 150, pacemap: 78, type: 'uncertain', lava: true },
+                    { id: 'B', name: 'Site B (Clear Exit)', x: 310, y: 270, egmDelay: 15, ppi: 405, fusion: 'concealed', sqrs: 320, pacemap: 95, type: 'exit', lava: false }
+                ],
+                faculty: {
+                    isthmusSite: 'uncertain',
+                    explanation: "Data at Site A yields PPI - TCL = 32 ms and S-QRS/TCL = 37.5%, but pacing required 10mA (high threshold causing far-field capture). Correct choice: Recognize INCONCLUSIVE data; do not ablate yet.",
+                    pitfall: "Forcing a binary diagnosis when EP findings are compromised leads to inappropriate ablation lesions."
+                }
+            }
+        ];
+
+        // 10-QUESTION ASSESSMENT DATABASE
+        const quizQuestions = [
+            {
+                q: "1. Pacing during VT at a site produces Concealed Fusion with a Post-Pacing Interval minus VT Cycle Length (PPI - TCL) of 15 ms. The S-QRS / TCL ratio is 45%. What is this site?",
+                options: ["Entrance Site", "Central Protected Isthmus", "Exit Site", "Inner Bystander"],
+                answer: 1,
+                reason: "Concealed fusion + short PPI-TCL (≤30ms) + S-QRS/TCL between 30-70% defines the central isthmus."
+            },
+            {
+                q: "2. You pace at a scar site showing an isolated diastolic potential. Entrainment shows Concealed Fusion, but PPI - TCL is 65 ms. What is the electrophysiological classification?",
+                options: ["Critical Isthmus", "Outer Loop", "Inner Bystander", "Outer Bystander"],
+                answer: 2,
+                reason: "Concealed fusion with a prolonged PPI-TCL (>30ms) is the classic hallmark of an Inner Bystander (a blind branch off the circuit)."
+            },
+            {
+                q: "3. Pacing at Site X produces a 100% 12-lead ECG pace-map match with clinical VT. What does this prove?",
+                options: ["Site X is definitely the central isthmus", "Site X is in the circuit, but could be an exit or outer bystander", "Site X is an inner bystander", "Site X must be ablated immediately"],
+                answer: 1,
+                reason: "High pace-map correlation occurs at exits and outer bystanders because pacing exits into the myocardium at the same wavefront location as VT."
+            },
+            {
+                q: "4. You observe Manifest Fusion on surface ECG during entrainment, but PPI - TCL is short (10 ms). What component are you pacing?",
+                options: ["Central Isthmus", "Entrance Site", "Outer Loop", "Inner Bystander"],
+                answer: 2,
+                reason: "Manifest fusion combined with a short PPI-TCL indicates the Outer Loop of the re-entry circuit."
+            },
+            {
+                q: "5. Pacing at 12 mA output results in a PPI - TCL of 10 ms at a scar site. Pacing at 2 mA at the same site yields a PPI - TCL of 50 ms. Why?",
+                options: ["Local conduction velocity accelerated", "High output caused far-field capture of adjacent myocardium, artificially shortening PPI", "Low output caused local block", "VT cycle length slowed down"],
+                answer: 1,
+                reason: "Excessive pacing output captures tissue outside the slow conduction channel (far-field capture), giving a false impression of circuit proximity."
+            },
+            {
+                q: "6. Overdrive pacing is performed at a cycle length 60 ms faster than VT TCL. PPI - TCL increases from 20 ms to 75 ms. What mechanism explains this?",
+                options: ["Decremental conduction delay within the protected slow zone during rapid pacing", "Far-field capture", "Circuit termination", "Substrate hypertrophy"],
+                answer: 0,
+                reason: "Rapid pacing causes decremental conduction delay in the protected isthmus, artificially prolonging the return interval (PPI)."
+            },
+            {
+                q: "7. In a patient with hemodynamically unstable VT where entrainment cannot be performed, which substrate mapping strategy is evidence-based?",
+                options: ["Ablate all areas with voltage < 1.5 mV", "LAVA (Local Abnormal Ventricular Activity) elimination and DEEP mapping in Sinus Rhythm", "Empiric RV apical ablation", "Ablate only the apex"],
+                answer: 1,
+                reason: "During sinus rhythm, targeting LAVAs and Decremental Evoked Potentials (DEEPs) allows effective scar channel ablation in un-tolerated VTs."
+            },
+            {
+                q: "8. Pacing at a diastolic channel site yields Concealed Fusion and PPI - TCL = 20 ms. S-QRS / TCL ratio is 15%. Where is this catheter relative to the circuit?",
+                options: ["Exit Site", "Central Isthmus", "Entrance Site", "Outer Bystander"],
+                answer: 2,
+                reason: "S-QRS / TCL < 30% indicates pacing at the Entrance site of the protected channel."
+            },
+            {
+                q: "9. What electrogram characteristic best distinguishes a protected central isthmus site during sinus rhythm or VT?",
+                options: ["High-amplitude sharp single spike (>3.0 mV)", "Low-amplitude, fractionated mid-diastolic potential / LAVA bounded by unexcitable scar", "Normal ST segment elevation", "Far-field atrial artifact"],
+                answer: 1,
+                reason: "The central isthmus consists of slowly conducting, insulated viable fibers exhibiting low-voltage fractionated diastolic activity."
+            },
+            {
+                q: "10. In Case 6 (Diagnostic Uncertainty), PPI - TCL is 32 ms and pacing threshold is 10 mA. What is the most appropriate clinical decision?",
+                options: ["Ablate immediately", "Recognize findings are inconclusive due to high output artifact & re-map at lower threshold or alternate site", "Assume it is the exit site", "Stop the procedure"],
+                answer: 1,
+                reason: "EP data must be integrated carefully. When measurements are ambiguous or distorted by high pacing output, avoid empiric lesions and gather further evidence."
+            }
+        ];
+
+        // INITIALIZATION
+        window.onload = function() {
+            loadCase(0);
+            renderQuiz();
+            setupCanvas();
+            window.addEventListener('resize', setupCanvas);
+        };
+
+        // LOAD CASE
+        function loadCase(index) {
+            currentCaseIndex = parseInt(index);
+            const c = cases[currentCaseIndex];
+            selectedSiteId = null;
+            entrainmentActive = false;
+            ablationDelivered = false;
+
+            document.getElementById('case-title-text').innerText = c.title;
+            document.getElementById('case-tcl-display').innerText = `VT TCL: ${c.tcl} ms`;
+            document.getElementById('case-description-text').innerText = c.description;
+            document.getElementById('case-difficulty-badge').innerText = `Level: ${c.difficulty}`;
+
+            // Reset UI
+            document.getElementById('catheter-indicator').classList.add('hidden');
+            document.getElementById('selected-site-label').innerText = 'Site: None Selected';
+            document.getElementById('measurement-overlay').classList.add('hidden');
+            document.getElementById('entrain-btn').disabled = true;
+            document.getElementById('feedback-panel').classList.add('hidden');
+            document.getElementById('fusion-status-tag').innerText = 'Status: Idle';
+            document.getElementById('fusion-status-tag').className = 'px-2 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400 font-mono';
+
+            renderSubstrateSVG();
+            populateTargetDropdown();
+            updateFacultyPanel();
+            drawCanvas();
+        }
+
+        // RENDER SVG SUBSTRATE
+        function renderSubstrateSVG() {
+            const c = cases[currentCaseIndex];
+            const scarGroup = document.getElementById('scar-group');
+            const sitesGroup = document.getElementById('mapping-sites-group');
+            const vectorsGroup = document.getElementById('circuit-vectors');
+            const ablationGroup = document.getElementById('ablation-lesions-group');
+
+            ablationGroup.innerHTML = '';
+
+            // Render Scar Background
+            scarGroup.innerHTML = `
+                <path d="${c.scarPaths}" fill="#1e1b2e" stroke="#4c1d95" stroke-width="2" opacity="0.9"/>
+                <path d="${c.denseScarPaths}" fill="#0f0a1c" stroke="#2e1065" stroke-width="2"/>
+            `;
+
+            // Circuit Wavefront Vectors (Faculty Mode / Post Ablation)
+            vectorsGroup.innerHTML = `
+                <path d="M 190 160 Q 240 180 250 210 Q 280 230 300 250" fill="none" stroke="#ffff00" stroke-width="3" stroke-dasharray="6,4" opacity="0.8"/>
+                <polygon points="298,245 308,255 293,258" fill="#ffff00"/>
+            `;
+            vectorsGroup.style.opacity = facultyMode ? "1" : "0";
+
+            // Render Mapping Sites
+            let sitesHTML = '';
+            c.sites.forEach(site => {
+                const isSelected = selectedSiteId === site.id;
+                sitesHTML += `
+                    <g class="cursor-pointer group" onclick="selectSite('${site.id}')">
+                        <circle cx="${site.x}" cy="${site.y}" r="12" fill="${isSelected ? 'rgba(0, 240, 255, 0.3)' : 'rgba(255, 255, 255, 0.1)'}" stroke="${isSelected ? '#00f0ff' : '#64748b'}" stroke-width="2"/>
+                        <circle cx="${site.x}" cy="${site.y}" r="4" fill="${isSelected ? '#00f0ff' : '#94a3b8'}"/>
+                        <text x="${site.x + 15}" y="${site.y + 4}" fill="${isSelected ? '#00f0ff' : '#e2e8f0'}" font-size="11" font-family="monospace" font-weight="bold">
+                            ${facultyMode ? site.name : 'Site ' + site.id}
+                        </text>
+                    </g>
+                `;
+            });
+            sitesGroup.innerHTML = sitesHTML;
+        }
+
+        // POPULATE DROPDOWN FOR ABLATION TARGETS
+        function populateTargetDropdown() {
+            const dropdown = document.getElementById('target-site-select');
+            const c = cases[currentCaseIndex];
+            dropdown.innerHTML = '<option value="">-- Choose Mapping Location --</option>';
+            c.sites.forEach(s => {
+                dropdown.innerHTML += `<option value="${s.id}">Site ${s.id}</option>`;
+            });
+        }
+
+        // SELECT MAPPING SITE
+        function selectSite(siteId) {
+            selectedSiteId = siteId;
+            entrainmentActive = false;
+            const c = cases[currentCaseIndex];
+            const site = c.sites.find(s => s.id === siteId);
+
+            // Update Catheter Indicator
+            const cath = document.getElementById('catheter-indicator');
+            cath.classList.remove('hidden');
+            cath.setAttribute('transform', `translate(${site.x}, ${site.y})`);
+
+            document.getElementById('selected-site-label').innerText = `Site: ${site.id} (${currentMode === 'substrate' ? 'SR Substrate' : 'VT Mapping'})`;
+            document.getElementById('entrain-btn').disabled = (currentMode === 'substrate');
+
+            // Render EGM Measurements
+            renderMeasurements(site, c.tcl);
+            renderSubstrateSVG();
+            drawCanvas();
+        }
+
+        // RENDER MEASUREMENTS IN PANEL
+        function renderMeasurements(site, tcl) {
+            const overlay = document.getElementById('measurement-overlay');
+            overlay.classList.remove('hidden');
+
+            const ppiTcl = site.ppi - tcl;
+            const sqrsRatio = Math.round((site.sqrs / tcl) * 100);
+
+            document.getElementById('val-egm-qrs').innerText = visualEstimateHidden ? '??? ms' : `${site.egmDelay} ms`;
+            document.getElementById('val-ppi').innerText = visualEstimateHidden ? '??? ms' : `${site.ppi} ms`;
+            document.getElementById('val-ppi-tcl').innerText = visualEstimateHidden ? '??? ms' : `${ppiTcl} ms`;
+            document.getElementById('val-sqrs-tcl').innerText = visualEstimateHidden ? '??? %' : `${sqrsRatio} %`;
+        }
+
+        function toggleVisualEstimate() {
+            visualEstimateHidden = !visualEstimateHidden;
+            document.getElementById('estimate-toggle-btn').innerText = visualEstimateHidden ? 'Reveal Values' : 'Hide Values (Estimate Mode)';
+            if (selectedSiteId) {
+                const c = cases[currentCaseIndex];
+                const site = c.sites.find(s => s.id === selectedSiteId);
+                renderMeasurements(site, c.tcl);
+            }
+        }
+
+        // UPDATE PACING SETTINGS (WHAT-IF CONTROLS)
+        function updatePacingSettings() {
+            pacerOutput = parseInt(document.getElementById('output-slider').value);
+            pacerPCL = parseInt(document.getElementById('pcl-slider').value);
+
+            document.getElementById('output-val').innerText = `${pacerOutput} mA ${pacerOutput > 8 ? '(FAR-FIELD CAPTURE RISK)' : '(Local Capture)'}`;
+            document.getElementById('pcl-val').innerText = `${pacerPCL} ms`;
+
+            // Toggle Warnings
+            document.getElementById('high-output-warning').classList.toggle('hidden', pacerOutput <= 8);
+            
+            const c = cases[currentCaseIndex];
+            const pclDiff = c.tcl - pacerPCL;
+            document.getElementById('rapid-pacing-warning').classList.toggle('hidden', pclDiff < 30);
+
+            if (entrainmentActive && selectedSiteId) {
+                drawCanvas();
+            }
+        }
+
+        // PERFORM OVERDRIVE ENTRAINMENT
+        function performEntrainment() {
+            if (!selectedSiteId || currentMode === 'substrate') return;
+            entrainmentActive = true;
+
+            const c = cases[currentCaseIndex];
+            const site = c.sites.find(s => s.id === selectedSiteId);
+
+            // Compute Artifact Distortions
+            let effectiveFusion = site.fusion;
+            let effectivePPI = site.ppi;
+
+            if (pacerOutput > 8) {
+                // High output causes far-field capture -> manifest fusion & shorter apparent PPI
+                effectiveFusion = 'manifest';
+                effectivePPI = Math.max(c.tcl, site.ppi - 35);
+            }
+
+            if (c.tcl - pacerPCL >= 30) {
+                // Rapid pacing causes decremental delay in slow zone -> prolongs PPI
+                effectivePPI += 40;
+            }
+
+            const ppiTcl = effectivePPI - c.tcl;
+
+            // Status Tag Update
+            const tag = document.getElementById('fusion-status-tag');
+            tag.innerText = `ENTRAINED: ${effectiveFusion.toUpperCase()} FUSION (PPI-TCL: ${ppiTcl}ms)`;
+            tag.className = effectiveFusion === 'concealed' 
+                ? 'px-2 py-0.5 text-[10px] rounded bg-green-950 text-green-300 border border-green-700 font-mono font-bold'
+                : 'px-2 py-0.5 text-[10px] rounded bg-amber-950 text-amber-300 border border-amber-700 font-mono font-bold';
+
+            drawCanvas();
+        }
+
+        // DYNAMIC ECG / EGM CANVAS DRAWING ENGINE
+        function setupCanvas() {
+            const canvas = document.getElementById('egm-canvas');
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width - 16;
+            canvas.height = rect.height - 80;
+            drawCanvas();
+        }
+
+        function drawCanvas() {
+            const canvas = document.getElementById('egm-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Channel Heights
+            const channelH = h / 3;
+
+            // Labels
+            ctx.font = '10px monospace';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText('Lead II (Surface ECG)', 10, 15);
+            ctx.fillText('Lead V1 (Surface ECG)', 10, channelH + 15);
+            ctx.fillText(currentMode === 'substrate' ? 'Bipolar EGM (Sinus Rhythm / LAVA)' : 'Bipolar EGM (Local Cardiac)', 10, channelH * 2 + 15);
+
+            const c = cases[currentCaseIndex];
+            const site = selectedSiteId ? c.sites.find(s => s.id === selectedSiteId) : null;
+
+            // Draw Lead II
+            ctx.beginPath();
+            ctx.strokeStyle = '#00ff66';
+            ctx.lineWidth = 1.5;
+            for (let x = 0; x < w; x++) {
+                const t = x * 3; // Time scale
+                let y = channelH / 2 + Math.sin(t / 20) * 2; // Baseline noise
+
+                // QRS Complexes triggered by TCL
+                const phase = t % c.tcl;
+                if (phase < 40) {
+                    y -= Math.sin(phase / 40 * Math.PI) * 25; // R wave
+                } else if (phase >= 40 && phase < 60) {
+                    y += Math.sin((phase - 40) / 20 * Math.PI) * 10; // S wave
+                }
+
+                if (entrainmentActive && (t % pacerPCL < 10)) {
+                    // Pacing Spike
+                    ctx.lineTo(x, 10);
+                }
+
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Draw Lead V1
+            ctx.beginPath();
+            ctx.strokeStyle = '#00ff66';
+            ctx.lineWidth = 1.5;
+            for (let x = 0; x < w; x++) {
+                const t = x * 3;
+                let y = channelH * 1.5 + Math.sin(t / 20) * 2;
+
+                const phase = t % c.tcl;
+                if (phase < 30) {
+                    y += Math.sin(phase / 30 * Math.PI) * 20; // QS in V1
+                }
+
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Draw Bipolar EGM Channel
+            ctx.beginPath();
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 1.5;
+
+            for (let x = 0; x < w; x++) {
+                const t = x * 3;
+                let y = channelH * 2.5;
+
+                if (site) {
+                    const phase = (t + site.egmDelay) % c.tcl;
+
+                    if (site.lava) {
+                        // Fractionated low-voltage mid-diastolic LAVA potential
+                        if (phase > 120 && phase < 220) {
+                            y += (Math.random() - 0.5) * 18 * Math.sin((phase - 120) / 100 * Math.PI);
+                        }
+                    } else {
+                        // Sharp near-field ventricular activation spike
+                        if (phase < 30) {
+                            y += Math.sin(phase / 30 * Math.PI * 2) * 35;
+                        }
+                    }
+                } else {
+                    y += (Math.random() - 0.5) * 3;
+                }
+
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        // SUBMIT ABLATION DECISION & ADVERSARIAL FEEDBACK
+        function submitAblationDecision() {
+            const targetSite = document.getElementById('target-site-select').value;
+            const rationale = document.getElementById('rationale-select').value;
+            const feedbackPanel = document.getElementById('feedback-panel');
+            const feedbackHeader = document.getElementById('feedback-header');
+            const feedbackBody = document.getElementById('feedback-body');
+
+            if (!targetSite || !rationale) {
+                alert("Please select both an Ablation Target Site and a Primary Rationale!");
+                return;
+            }
+
+            feedbackPanel.classList.remove('hidden');
+            const c = cases[currentCaseIndex];
+            const correctSite = c.faculty.isthmusSite;
+
+            // Render Ablation Lesion on SVG
+            const sObj = c.sites.find(s => s.id === targetSite);
+            if (sObj) {
+                const ablationGroup = document.getElementById('ablation-lesions-group');
+                ablationGroup.innerHTML += `
+                    <circle cx="${sObj.x}" cy="${sObj.y}" r="10" fill="#ef4444" opacity="0.8"/>
+                    <circle cx="${sObj.x}" cy="${sObj.y}" r="5" fill="#f87171"/>
+                `;
+            }
+
+            // Evaluation Logic
+            if (targetSite === correctSite && rationale === 'circuit_criteria') {
+                feedbackHeader.className = "font-bold text-xs p-2 rounded text-center bg-green-950 text-green-300 border border-green-700";
+                feedbackHeader.innerText = "✓ SUCCESSFUL VT TERMINATION & ISOLATION";
+                feedbackBody.innerHTML = `
+                    <p class="text-green-400 font-bold">Excellent EP Reasoning!</p>
+                    <p>${c.faculty.explanation}</p>
+                    <p class="text-gray-400 text-[11px] mt-1">You correctly relied on integrated criteria (concealed fusion + short PPI-TCL + intermediate S-QRS/TCL) rather than pattern-matching.</p>
+                `;
+                // Reveal Vectors
+                document.getElementById('circuit-vectors').style.opacity = "1";
+            } else {
+                feedbackHeader.className = "font-bold text-xs p-2 rounded text-center bg-red-950 text-red-300 border border-red-700";
+                feedbackHeader.innerText = "❌ INEFFECTIVE ABLATION / VT RECURRENCE";
+
+                let specificPitfall = c.faculty.pitfall;
+                if (rationale === 'best_pacemap') {
+                    specificPitfall = "PITFALL: Relying on 100% Pace-Map match led you to ablate an Exit or Bystander site! Exits produce identical ECG morphology but do not block re-entry.";
+                } else if (rationale === 'diastolic_potential') {
+                    specificPitfall = "PITFALL: Targeting the 'prettiest' LAVA without checking PPI-TCL resulted in ablating a blind Inner Bystander branch.";
+                }
+
+                feedbackBody.innerHTML = `
+                    <p class="text-red-400 font-bold">Ablation Failed to Terminate VT.</p>
+                    <p><strong>Correct Target:</strong> Site ${correctSite}</p>
+                    <p class="mt-1">${specificPitfall}</p>
+                    <p class="text-gray-400 text-[11px] mt-1"><strong>Faculty Guidance:</strong> ${c.faculty.explanation}</p>
+                `;
+            }
+        }
+
+        // TRIGGER DIAGNOSTIC UNCERTAINTY TEST
+        function triggerUncertaintyTest() {
+            loadCase(5); // Load Case 6 (Inconclusive)
+            alert("Diagnostic Uncertainty Mode Activated:\nReview Case 6 where findings are ambiguous. Learn to declare data inconclusive rather than guessing!");
+        }
+
+        // MODE SWITCHER (ACTIVATION vs SUBSTRATE vs EXAM)
+        function setMappingMode(mode) {
+            currentMode = mode;
+            document.getElementById('mode-activation-btn').className = mode === 'activation' ? 'px-3 py-1 rounded-md bg-blue-600 text-white font-medium transition' : 'px-3 py-1 rounded-md text-gray-400 hover:text-gray-200 transition';
+            document.getElementById('mode-substrate-btn').className = mode === 'substrate' ? 'px-3 py-1 rounded-md bg-blue-600 text-white font-medium transition' : 'px-3 py-1 rounded-md text-gray-400 hover:text-gray-200 transition';
+            document.getElementById('mode-exam-btn').className = mode === 'exam' ? 'px-3 py-1 rounded-md bg-blue-600 text-white font-medium transition' : 'px-3 py-1 rounded-md text-gray-400 hover:text-gray-200 transition';
+
+            const appContainer = document.getElementById('main-app-container');
+            const examContainer = document.getElementById('assessment-container');
+
+            if (mode === 'exam') {
+                appContainer.classList.add('hidden');
+                examContainer.classList.remove('hidden');
+            } else {
+                appContainer.classList.remove('hidden');
+                examContainer.classList.add('hidden');
+                document.getElementById('substrate-mode-label').innerText = mode === 'substrate' ? 'Mode: Substrate SR Mapping (Unstable VT)' : 'Mode: Activation / Entrainment';
+                document.getElementById('entrain-btn').disabled = (mode === 'substrate');
+                if (selectedSiteId) selectSite(selectedSiteId);
+            }
+        }
+
+        // FACULTY MODE TOGGLE
+        function toggleFacultyMode() {
+            facultyMode = !facultyMode;
+            const btn = document.getElementById('faculty-toggle-btn');
+            btn.innerHTML = facultyMode 
+                ? `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> <span>FACULTY MODE: ON</span>`
+                : `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> <span>FACULTY MODE: OFF</span>`;
+            
+            btn.className = facultyMode 
+                ? 'px-3 py-1 rounded-lg border border-purple-500 text-purple-100 bg-purple-900 font-mono text-xs flex items-center gap-1.5 transition font-bold shadow-lg shadow-purple-900/50'
+                : 'px-3 py-1 rounded-lg border border-purple-500/40 text-purple-300 bg-purple-950/30 hover:bg-purple-900/40 font-mono text-xs flex items-center gap-1.5 transition';
+
+            document.getElementById('faculty-info-panel').classList.toggle('hidden', !facultyMode);
+            renderSubstrateSVG();
+            updateFacultyPanel();
+        }
+
+        function updateFacultyPanel() {
+            const c = cases[currentCaseIndex];
+            const panel = document.getElementById('faculty-details');
+            panel.innerHTML = `
+                <div><strong>Critical Isthmus Target:</strong> Site ${c.faculty.isthmusSite}</div>
+                <div><strong>EP Rationale:</strong> ${c.faculty.explanation}</div>
+                <div><strong>Trainee Pitfall:</strong> ${c.faculty.pitfall}</div>
+                <div class="text-[10px] text-purple-300/70 pt-1 border-t border-purple-800/50">
+                    Ref: Stevenson WG et al. Circulation 1993; Jaïs P et al. Circulation 2012
+                </div>
+            `;
+        }
+
+        // RENDER 10-QUESTION QUIZ
+        function renderQuiz() {
+            const container = document.getElementById('quiz-questions-container');
+            container.innerHTML = '';
+
+            quizQuestions.forEach((item, idx) => {
+                let optionsHTML = '';
+                item.options.forEach((opt, optIdx) => {
+                    optionsHTML += `
+                        <label class="flex items-center space-x-2 text-xs text-gray-300 hover:text-white cursor-pointer p-1.5 rounded hover:bg-epDark/50">
+                            <input type="radio" name="quiz-q-${idx}" value="${optIdx}" class="accent-blue-500">
+                            <span>${opt}</span>
+                        </label>
+                    `;
+                });
+
+                container.innerHTML += `
+                    <div class="bg-epDark p-4 rounded-lg border border-epBorder space-y-2">
+                        <div class="font-semibold text-xs text-gray-200">${item.q}</div>
+                        <div class="space-y-1">${optionsHTML}</div>
+                        <div id="quiz-explain-${idx}" class="text-[11px] text-gray-400 font-mono hidden pt-2 border-t border-epBorder"></div>
+                    </div>
+                `;
+            });
+        }
+
+        // GRADE ASSESSMENT
+        function submitAssessment() {
+            let score = 0;
+            quizQuestions.forEach((item, idx) => {
+                const selected = document.querySelector(`input[name="quiz-q-${idx}"]:checked`);
+                const explainDiv = document.getElementById(`quiz-explain-${idx}`);
+                explainDiv.classList.remove('hidden');
+
+                if (selected && parseInt(selected.value) === item.answer) {
+                    score++;
+                    explainDiv.innerHTML = `<span class="text-green-400 font-bold">✓ Correct!</span> ${item.reason}`;
+                } else {
+                    explainDiv.innerHTML = `<span class="text-red-400 font-bold">❌ Incorrect.</span> Correct Answer: ${item.options[item.answer]}. ${item.reason}`;
+                }
+            });
+
+            const pct = Math.round((score / quizQuestions.length) * 100);
+            const resultsPanel = document.getElementById('assessment-results-panel');
+            resultsPanel.classList.remove('hidden');
+
+            document.getElementById('assessment-score-summary').innerHTML = `
+                <div class="text-base font-bold ${pct >= 80 ? 'text-green-400' : 'text-amber-400'}">
+                    Final Assessment Score: ${score} / ${quizQuestions.length} (${pct}%)
+                </div>
+                <div class="mt-2 space-y-1 text-xs">
+                    <p><strong>Diagnostic Competency Profile:</strong></p>
+                    <p>${pct >= 80 ? '• Strong mastery of VT re-entry circuit entrainment & bystander discrimination.' : '• Needs work on distinguishing exit sites from central isthmus and recognizing pacing artifacts.'}</p>
+                </div>
+            `;
+            resultsPanel.scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
